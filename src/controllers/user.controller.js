@@ -1,7 +1,10 @@
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { ApiError } from "../utils/ApiError.js";
 import { User } from "../models/user.models.js";
-import { uploadOnCloudinary } from "../utils/cloudinary.js";
+import {
+  deleteFromCloudinary,
+  uploadOnCloudinary,
+} from "../utils/cloudinary.js";
 import { ApiResponse } from "../utils/ApiResponse.js";
 import jwt from "jsonwebtoken";
 import mongoose from "mongoose";
@@ -13,7 +16,6 @@ const generateAccessAndRefreshTokens = async (userId) => {
   const refreshToken = user.generateRefreshToken();
 
   await user.save({ validateBeforeSave: false });
- 
 
   return { accessToken, refreshToken };
 };
@@ -209,7 +211,7 @@ const changeCurrentPassword = asyncHandler(async (req, res) => {
 const getCurrentUser = asyncHandler(async (req, res) => {
   return res
     .status(200)
-    .json(200, req.user, "Current User Fetched Successfully");
+    .json(new ApiResponse(200, req.user, "Current User Fetched Successfully"));
 });
 
 const updateAccountDetails = asyncHandler(async (req, res) => {
@@ -224,7 +226,7 @@ const updateAccountDetails = asyncHandler(async (req, res) => {
       $set: {
         userName: userName,
         email: email,
-        fullNam: fullName,
+        fullName: fullName,
       },
     },
     { new: true }
@@ -239,11 +241,22 @@ const updateUserCoverImage = asyncHandler(async (req, res) => {
   if (!coverImageLocalPath) {
     throw new ApiError(400, "Cover Image file is missing");
   }
+
+  const user = await User.findById(req.user?._id);
+  if (!user) {
+    throw new ApiError(404, "User not found");
+  }
+
+  // If user already has an coverImage, extract public_id and delete from Cloudinary
+  if (user.coverImage) {
+    const publicId = user.coverImage.split("/").pop().split(".")[0]; // crude way to extract public_id
+    await deleteFromCloudinary(publicId);
+  }
   const coverImage = await uploadOnCloudinary(coverImageLocalPath);
   if (!coverImage.url) {
     throw new ApiError(400, "Error while uploading on cover Image");
   }
-  const user = await User.findByIdAndUpdate(
+  const updatedUser = await User.findByIdAndUpdate(
     req.user?._id,
     {
       $set: {
@@ -254,7 +267,9 @@ const updateUserCoverImage = asyncHandler(async (req, res) => {
   ).select("-password");
   return res
     .status(200)
-    .json(new ApiResponse(200, user, "Cover Image is updated Successfully"));
+    .json(
+      new ApiResponse(200, updatedUser, "Cover Image is updated Successfully")
+    );
 });
 
 const updateUserAvatar = asyncHandler(async (req, res) => {
@@ -262,11 +277,24 @@ const updateUserAvatar = asyncHandler(async (req, res) => {
   if (!avatarLocalPath) {
     throw new ApiError(400, "Avatar file is missing");
   }
+
+  const user = await User.findById(req.user?._id);
+  if (!user) {
+    throw new ApiError(404, "User not found");
+  }
+
+  // If user already has an avatar, extract public_id and delete from Cloudinary
+  if (user.avatar) {
+    const publicId = user.avatar.split("/").pop().split(".")[0]; // crude way to extract public_id
+    await deleteFromCloudinary(publicId);
+  }
+
   const avatar = await uploadOnCloudinary(avatarLocalPath);
   if (!avatar.url) {
     throw new ApiError(400, "Error while uploading on avatar");
   }
-  const user = await User.findByIdAndUpdate(
+
+  const updatedUser = await User.findByIdAndUpdate(
     req.user?._id,
     {
       $set: {
@@ -277,7 +305,9 @@ const updateUserAvatar = asyncHandler(async (req, res) => {
   ).select("-password");
   return res
     .status(200)
-    .json(new ApiResponse(200, user, "Avatar Image is updated Successfully"));
+    .json(
+      new ApiResponse(200, updatedUser, "Avatar Image is updated Successfully")
+    );
 });
 
 const getUserChannelProfile = asyncHandler(async (req, res) => {
@@ -287,7 +317,7 @@ const getUserChannelProfile = asyncHandler(async (req, res) => {
   }
 
   const channel = await User.aggregate([
-    { $match: { username: username?.toLowercase() } },
+    { $match: { userName: username?.toLowerCase() } },
     {
       $lookup: {
         from: "subscriptions",
